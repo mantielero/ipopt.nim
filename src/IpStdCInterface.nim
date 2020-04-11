@@ -82,16 +82,13 @@ const
   TRUE* :Bool = 1
   FALSE*:Bool = 0
 
-## * A pointer for anything that is to be passed between the called
-##   and individual callback function
 
 type
-  UserDataPtr* = pointer
+  UserDataPtr* = pointer  ## A pointer for anything that is to be passed between the called and individual callback function
 
-## * Type defining the callback function for evaluating the value of
-##   the objective function.  Return value should be set to false if
-##   there was a problem doing the evaluation.
-
+## Type defining the callback function for evaluating the value of
+## the objective function.  Return value should be set to false if
+## there was a problem doing the evaluation.
 type
   Eval_F_CB* = proc (n: Index; x: ptr Number; new_x: Bool; obj_value: ptr Number;
                   user_data: UserDataPtr): Bool {.cdecl.}
