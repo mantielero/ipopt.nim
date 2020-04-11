@@ -1,3 +1,14 @@
 nimcache/
 nimblecache/
 htmldocs/
+Ipopt-3.11.0-Win32-Win64-dll/
+Ipopt-3.11.1-win64-intel13.1/
+IpoptBuilder.v3.12.10.x86_64-w64-mingw32-gcc8/
+src/lib/
+src/*.h
+src/a.out
+src/ex01
+src/*.exe
+src/*.o
+src/*.out
+
