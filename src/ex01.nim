@@ -81,7 +81,19 @@ proc eval_g( n: Index;
   g[1] = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3] + my_data.g_offset[1]
   return TRUE
 
-
+#[
+Bool eval_jac_g(
+   Index       n,
+   Number*     x,
+   Bool        new_x,
+   Index       m,
+   Index       nele_jac,
+   Index*      iRow,
+   Index*      jCol,
+   Number*     values,
+   UserDataPtr user_data
+)  
+]#
 proc eval_jac_g( n: Index; 
                  xx: ptr Number; 
                  new_x: Bool; 
@@ -95,24 +107,24 @@ proc eval_jac_g( n: Index;
   if vvalues == nil:
     # return the structure of the jacobian 
     # this particular jacobian is dense 
-    let iRow = cast[ptr UncheckedArray[Number]](iiRow)
-    let jCol = cast[ptr UncheckedArray[Number]](jjCol)
-    iRow[0] = 0.0
-    jCol[0] = 0.0
-    iRow[1] = 0.0
-    jCol[1] = 1.0
-    iRow[2] = 0.0
-    jCol[2] = 2.0
-    iRow[3] = 0.0
-    jCol[3] = 3.0
-    iRow[4] = 1.0
-    jCol[4] = 0.0
-    iRow[5] = 1.0
-    jCol[5] = 1.0
-    iRow[6] = 1.0
-    jCol[6] = 2.0
-    iRow[7] = 1.0
-    jCol[7] = 3.0
+    let iRow = cast[ptr UncheckedArray[Index]](iiRow)
+    let jCol = cast[ptr UncheckedArray[Index]](jjCol)
+    iRow[0] = 0
+    jCol[0] = 0
+    iRow[1] = 0
+    jCol[1] = 1
+    iRow[2] = 0
+    jCol[2] = 2
+    iRow[3] = 0
+    jCol[3] = 3
+    iRow[4] = 1
+    jCol[4] = 0
+    iRow[5] = 1
+    jCol[5] = 1
+    iRow[6] = 1
+    jCol[6] = 2
+    iRow[7] = 1
+    jCol[7] = 3
   else:
     # return the values of the jacobian of the constraints 
     let x      = cast[ptr UncheckedArray[Number]](xx)
@@ -149,13 +161,15 @@ proc eval_h( n: Index;
   if vvalues == nil:
     # return the structure. This is a symmetric matrix, fill the lower left triangle only. 
     # the hessian for this problem is actually dense
-    let iRow = cast[ptr UncheckedArray[Number]](iiRow)
-    let jCol = cast[ptr UncheckedArray[Number]](jjCol)
+    let iRow = cast[ptr UncheckedArray[Index]](iiRow)
+    let jCol = cast[ptr UncheckedArray[Index]](jjCol)
     for row in 0..<4:
       for col in 0..row:
-        iRow[idx] = row.float
-        jCol[idx] = col.float
+        iRow[idx] = row.Index
+        jCol[idx] = col.Index
+        assert(idx < nele_hess)
         idx += 1
+        #echo idx
     assert(idx == nele_hess) 
 
   else:
@@ -316,7 +330,7 @@ when isMainModule:
                     cast[ptr Number](mult_g.addr),   # Input: Initial values for the constraint
                     cast[ptr Number](mult_x_L.addr), # Input: Initial values for the multipliers
                     cast[ptr Number](addr mult_x_U), # Input: Initial values for the multipliers
-                    cast[pointer](addr user_data) )
+                    cast[ptr MyUserData](addr user_data) )
 
     if status == Solve_Succeeded:
       echo "\n\nSolution of the primal variables, x\n"
@@ -324,7 +338,7 @@ when isMainModule:
         echo &"x[{i}] = {x[i]}\n"
       
       echo "\n\nSolution of the constraint multipliers, lambda\n"
-      for i in 0..g_L.len:
+      for i in 0..<g_L.len:
         echo &"lambda[{i}] = {mult_g[i]}\n"
       
       echo "\n\nSolution of the bound multipliers, z_L and z_U\n"
@@ -334,7 +348,7 @@ when isMainModule:
       for i in 0..<x_L.len:
         echo &"z_U[{i}] = {mult_x_U[i]}\n"
     
-      echo "\n\nObjective value\nf(x*) = {obj}\n"
+      echo &"\n\nObjective value\nf(x*) = {obj}\n"
    
     else:  
       echo "\n\nERROR OCCURRED DURING IPOPT OPTIMIZATION.\n"
