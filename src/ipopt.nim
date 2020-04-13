@@ -236,22 +236,46 @@ echo ">>>>>> ", x_L
 echo ">>>>>> ", x_U
 ]#
 
-macro problem(body:untyped):untyped =
+macro problem(mbody:untyped):untyped =
   result = nnkStmtList.newTree()
   let x_L = newIdentNode("x_L")
   let x_U = newIdentNode("x_U")
-  let eval_f = genSym(ident="eval_f")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
+  let eval_f = genSym(nskProc, ident="eval_ff")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
+  let eval_grad_f = genSym(nskProc, ident="eval_grad_ff")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
+  let eval_jac_g = genSym(nskProc, ident="eval_jac_gg")
+  let eval_h = genSym(nskProc, ident="eval_hh")  
+  let g_L = newIdentNode("g_L")  
+  let g_U = newIdentNode("g_U")
 
-  for body in body:
+  var x_Lvec:seq[NimNode]
+  var x_Uvec:seq[NimNode]
+  var g_lower:seq[NimNode]
+  var g_upper:seq[NimNode]
+  var g:seq[NimNode]
+  var g_grad:seq[seq[NimNode]]
+  var g_hess:seq[ seq[seq[NimNode]] ]
+  #var g_constrains:
+  var nLower = 0
+  var nUpper = 0
+  for body in mbody:
     body.expectKind nnkCall
     if eqIdent(body[0], "upper_limits"):
       let tmp = body[1][0]
+      #echo repr "-----", tmp
       result.add quote do:
         let `x_U` = `tmp`
+      
+      for i in tmp:
+        nUpper += 1
+
     if eqIdent(body[0], "lower_limits"):
       let tmp = body[1][0]
       result.add quote do:
-        let `x_L` = `tmp`        
+        let `x_L` = `tmp` 
+
+      for i in tmp:
+        nLower += 1
+
     if eqIdent(body[0], "objective"):        
       let tmp = body[1][0]
       let x = newIdentNode("x")
@@ -268,9 +292,241 @@ macro problem(body:untyped):untyped =
   
             #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
             obj_value[] = `tmp`
-            TRUE
+            return TRUE
 
-  #echo repr body
+    if eqIdent(body[0], "grad"):        
+      let tmp = body[1][0]
+      let x = newIdentNode("x")
+      #let n = x_L.len
+      result.add quote do:
+        proc `eval_grad_f`(n: Index; 
+                 xx: ptr Number; # Input
+                 new_x: Bool; 
+                 grad_ff: ptr Number; # Output
+                 user_data: UserDataPtr): Bool {.cdecl, exportc.} =
+            ## Callback function for evaluating objective function
+            #assert(n == 4)
+            let `x` = cast[ptr UncheckedArray[Number]](xx) 
+            let grad_f = cast[ptr UncheckedArray[Number]](grad_ff)
+            for i in 0..<`tmp`.len:
+              grad_f[i] = `tmp`[i]
+            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
+            #obj_value[] = `tmp`
+            return TRUE
+
+    if eqIdent(body[0], "hess"):          
+      for i in body[1]:   # Each part of the Hessian
+        var tmp1:seq[seq[NimNode]] 
+        #echo "==> ", repr i[1]
+        for r in i[1]:
+          var tmp2:seq[NimNode]
+          for c in r[1]:
+            tmp2 &= c
+          
+          tmp1 &= tmp2
+        g_hess &= tmp1
+      #echo ">> ", repr g_hess
+
+    if eqIdent(body[0], "constrain"):        
+      #let tmp = body[1][0]
+      let x = newIdentNode("x")
+      for item in body[1]:
+        #echo repr item[0]
+        if eqIdent(item[0], "lower_limit"):
+          g_lower &= item[1]
+        if eqIdent(item[0], "upper_limit"):
+          g_upper &= item[1]
+        if eqIdent(item[0], "function"):
+          g &= item[1]    
+        if eqIdent(item[0], "grad"):
+          var tmp:seq[NimNode]
+          for i in item[1][0]:
+            tmp &= i
+          
+          g_grad &= tmp
+        if eqIdent(item[0], "hess"):          
+          for i in item[1]:   # Each part of the Hessian
+            var tmp1:seq[seq[NimNode]] 
+            for r in i[1]:
+              var tmp2:seq[NimNode]
+              for c in r[1]:  
+                #echo repr c 
+                tmp2 &= c
+              
+              tmp1 &= tmp2
+            g_hess &= tmp1
+          
+        #echo "==>", repr g_hess
+          #echo repr g_hess
+      #let n = x_L.len
+      #[
+      result.add quote do:
+        proc `eval_grad_f`(n: Index; 
+                 xx: ptr Number; # Input
+                 new_x: Bool; 
+                 grad_ff: ptr Number; # Output
+                 user_data: UserDataPtr): Bool {.cdecl, exportc.} =
+            ## Callback function for evaluating objective function
+            #assert(n == 4)
+            let `x` = cast[ptr UncheckedArray[Number]](xx) 
+            let grad_f = cast[ptr UncheckedArray[Number]](grad_ff)
+            for i in 0..<`tmp`.len:
+              grad_f[i] = `tmp`[i]
+            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
+            #obj_value[] = `tmp`
+            return TRUE
+      ]#
+
+  # Jacobian
+  let x = newIdentNode("x")
+  var n_constrains:seq[int]
+  let n = nLower
+  for i in 0..<g_grad.len:
+    n_constrains &= g_grad[i].len
+  #echo repr n_constrains
+  result.add quote do:
+    proc `eval_jac_g`( n: Index; 
+                       xx: ptr Number; 
+                       new_x: Bool; 
+                       m: Index; 
+                       nele_jac: Index;
+                       iiRow: ptr Index; 
+                       jjCol: ptr Index; 
+                       vvalues: ptr Number;
+                       user_data: UserDataPtr): Bool {.cdecl, exportc.} =
+      ## Callback function for evaluating Jacobian of constraint functions
+      if vvalues == nil:
+        # return the structure of the jacobian 
+        # this particular jacobian is dense 
+        let iRow = cast[ptr UncheckedArray[Index]](iiRow)
+        let jCol = cast[ptr UncheckedArray[Index]](jjCol)
+        var idx = 0
+        for row in 0..<`n_constrains`.len:
+          for col in 0..<`n_constrains`[row]:
+            iRow[idx] = row.Index
+            jCol[idx] = col.Index
+            idx += 1
+      else:
+        # return the values of the jacobian of the constraints 
+        let `x`    = cast[ptr UncheckedArray[Number]](xx)
+        let values = cast[ptr UncheckedArray[Number]](vvalues)
+        var idx = 0
+        for row in 0..<`n_constrains`.len:   # For each constrain
+          for col in 0..<`n_constrains`[row]:
+            #let tmp = `g_grad`[row][col]
+            values[idx] = `g_grad`[row][col]
+            idx += 1
+
+      return TRUE
+
+  # Hessian
+  #echo "----------"
+  #for r in 0..<g_hess[0].len:
+  #  for c in 0..<g_hess[0][r].len:
+  #    echo ">> ", repr g_hess[0][r][c]
+  let obj_hess = g_hess[0]
+  for i in obj_hess:
+    echo repr i
+  #let n = x_U.len
+  #echo ">> ", n
+  result.add quote do:
+    proc `eval_h`( n: Index; 
+                   xx: ptr Number; 
+                   new_x: Bool; 
+                   obj_factor: Number; 
+                   m: Index;
+                   llambda: ptr Number; 
+                   new_lambda: Bool; 
+                   nele_hess: Index;
+                   iiRow: ptr Index; 
+                   jjCol: ptr Index; 
+                   vvalues: ptr Number;
+                   user_data: UserDataPtr): Bool {.cdecl, exportc.} =    
+      #var idx:Index = 0 # nonzero element counter
+      #var row:Index = 0 # row counter for loop 
+      #var col:Index = 0 # col counter for loop
+
+      if vvalues == nil:
+        # return the structure. This is a symmetric matrix, fill the lower left triangle only. 
+        # the hessian for this problem is actually dense
+        let iRow = cast[ptr UncheckedArray[Index]](iiRow)
+        let jCol = cast[ptr UncheckedArray[Index]](jjCol)
+        var idx = 0
+        for row in 0..<`n`:
+          for col in 0..row:
+            iRow[idx] = row.Index
+            jCol[idx] = col.Index
+            #assert(idx < nele_hess)
+            idx += 1
+            #echo idx
+        #assert(idx == nele_hess) 
+
+      else:
+        # return the values. This is a symmetric matrix, fill the lower left triangle only
+        
+        # fill the objective portion
+        let `x`    = cast[ptr UncheckedArray[Number]](xx)
+        let values = cast[ptr UncheckedArray[Number]](vvalues)
+        var idx = 0
+        for row in 0..<`n`:
+          for col in 0..row:
+            let tmp = `obj_hess`[row][col] 
+            #values[idx] = obj_factor * `obj_hess`[row][col]    #(2 * x[3])  # 0,0 
+            #echo row, " ", col, "   ", repr `g_hess`[0][row][col]
+            idx += 1
+            #echo repr `obj_hess`[0][0]
+            #echo row, " ", col
+
+        #values[1] = obj_factor * (x[3])      # 1,0 
+        #values[2] = 0                        # 1,1 
+
+        #values[3] = obj_factor * (x[3])      # 2,0 
+        #values[4] = 0                        # 2,1 
+        #values[5] = 0                        # 2,2 
+
+        #values[6] = obj_factor * (2 * x[0] + x[1] + x[2])   # 3,0 
+        #values[7] = obj_factor * (x[0])                     # 3,1 
+        #values[8] = obj_factor * (x[0])                     # 3,2 
+        #values[9] = 0                                       # 3,3 
+
+#[
+
+
+
+
+
+    # add the portion for the first constraint
+    let lambda = cast[ptr UncheckedArray[Number]](llambda)
+    values[1] += lambda[0] * (x[2] * x[3])   # 1,0 
+
+    values[3] += lambda[0] * (x[1] * x[3])   # 2,0 
+    values[4] += lambda[0] * (x[0] * x[3])   # 2,1 
+
+    values[6] += lambda[0] * (x[1] * x[2])   # 3,0 
+    values[7] += lambda[0] * (x[0] * x[2])   # 3,1 
+    values[8] += lambda[0] * (x[0] * x[1])   # 3,2 
+
+    # add the portion for the second constraint
+    values[0] += lambda[1] * 2.0     # 0,0 
+    values[2] += lambda[1] * 2.0     # 1,1 
+    values[5] += lambda[1] * 2.0     # 2,2 
+    values[9] += lambda[1] * 2.0     # 3,3 
+
+  return TRUE  
+]#
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   #result.add quote do:
     #`body`
@@ -281,11 +537,56 @@ macro problem(body:untyped):untyped =
 #dumpAstGen:
 expandMacros:
   problem:
+    data:
+      g_offset: [0.0,0.0]
     lower_limits: [1.0,1.0,1.0,1.0]
     upper_limits: [5.0,5.0,5.0,5.0]
     objective: x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]
+    grad: 
+      [ x[0] * x[3] + x[3] * (x[0] + x[1] + x[2]),
+        x[0] * x[3],
+        x[0] * x[3] + 1.0,
+        x[0] * (x[0] + x[1] + x[2])  
+      ]
+    hess:
+      @[ @[ 2.0 * x[3]],
+         @[ x[3],                     0.0 ],
+         @[ x[3],                     0.0,  0.0 ],
+         @[ 2.0 * x[0] + x[1] + x[2], x[0], x[0], 0.0]
+      ]
+    constrain:
+      lower_limit: 25.0
+      upper_limit: high(Number)
+      function: x[0] * x[1] * x[2] * x[3] + data.g_offset[0]
+      grad:
+        [ x[1] * x[2] * x[3],
+          x[0] * x[2] * x[3],
+          x[0] * x[1] * x[3],
+          x[0] * x[1] * x[2]
+        ]
+      hess:
+        @[ @[0.0],
+           @[x[2] * x[3], 0.0],
+           @[x[1] * x[3], x[0] * x[3], 0.0 ],
+           @[x[1] * x[2], x[0] * x[2], x[0] * x[1], 0.0 ]           
+        ]
 
-
+    constrain:
+      lower_limit: 40.0
+      upper_limit: 40.0
+      function: x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3] + data.g_offset[1]
+      grad:
+        [ 2.0 * x[0], 
+          2.0 * x[1], 
+          2.0 * x[2],
+          2.0 * x[3]
+        ]
+      hess:
+        @[ @[2.0],
+           @[0.0, 2.0],
+           @[0.0, 0.0, 2.0],
+           @[0.0, 0.0, 0.0, 2.0]
+        ]
 
 
 
