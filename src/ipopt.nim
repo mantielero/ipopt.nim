@@ -257,6 +257,7 @@ macro problem(mbody:untyped):untyped =
   #var g_constrains:
   var nLower = 0
   var nUpper = 0
+  #var m = 0
   for body in mbody:
     body.expectKind nnkCall
     if eqIdent(body[0], "upper_limits"):
@@ -321,6 +322,7 @@ macro problem(mbody:untyped):untyped =
         for r in i[1]:
           var tmp2:seq[NimNode]
           for c in r[1]:
+            #echo "---> ", repr c, " ", type(c)
             tmp2 &= c
           
           tmp1 &= tmp2
@@ -426,7 +428,8 @@ macro problem(mbody:untyped):untyped =
   #    echo ">> ", repr g_hess[0][r][c]
   let obj_hess = g_hess[0]
   for i in obj_hess:
-    echo repr i
+    echo repr i," ", type(i)
+  echo type(obj_hess)
   #let n = x_U.len
   #echo ">> ", n
   result.add quote do:
@@ -468,12 +471,17 @@ macro problem(mbody:untyped):untyped =
         let `x`    = cast[ptr UncheckedArray[Number]](xx)
         let values = cast[ptr UncheckedArray[Number]](vvalues)
         var idx = 0
-        for row in 0..<`n`:
-          for col in 0..row:
-            let tmp = `obj_hess`[row][col] 
+        echo repr `obj_hess`
+        #for row in 0..<`n`:
+        #  for col in 0..row:
+        #for row in `obj_hess`:
+        #  for col in row:
+        #    echo repr col
+            #let tmp = obj_hess[row][col] 
+            #let tmp = col
             #values[idx] = obj_factor * `obj_hess`[row][col]    #(2 * x[3])  # 0,0 
             #echo row, " ", col, "   ", repr `g_hess`[0][row][col]
-            idx += 1
+            #idx += 1
             #echo repr `obj_hess`[0][0]
             #echo row, " ", col
 
