@@ -49,203 +49,22 @@ proc `[]=`*(ipopt_problem: IpoptProblem, key:string, val:Number) =
   let ret = AddIpoptNumOption(ipopt_problem, key.cstring, val )
   doAssert( ret == TRUE, &"failed setting \"{key}\" with value: {val}" )  
 
+#------------------------
 
 
-#[
-template objective(x:untyped, body:untyped):untyped =   #openArray[Number]
-  proc eval_ff( n:Index,
-                x:ptr Number, 
-                new_x:Bool,
-                obj_value:ptr Number, 
-                user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
-            ## Callback function for evaluating objective function
-            assert(n == 4)
-            let `x` = cast[ptr UncheckedArray[Number]](x) 
-  
-            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-            #obj_value[] = `body`
-            return TRUE
-expandMacros:
-  objective(x):
-    x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]
-]#
-
-#[
-
-]#
-
-
-#[
-
-
-proc solve(problem:IpoptProblem, init:openArray[Number]) =
-    var
-      #x = [1.0, 5.0, 5.0, 1.0]        # starting point and solution vector (allocate space for the initial point and set the values)
-      mult_g:array[2, Number]         # constraint multipliers at the solution 
-      mult_x_L:array[4, Number]       # lower bound multipliers at the solution
-      mult_x_U:array[4, Number]       # upper bound multipliers at the solution 
-      obj:Number                      # objective value
-
-  let status = IpoptSolve( nlp, # Problem that is to be optimized
-                  cast[ptr Number](x.addr),  # Input:  Starting point
-                  cast[ptr Number](nil), # Values of constraint at final point
-                  cast[ptr Number](obj.addr), # Final value of objective function
-                  cast[ptr Number](mult_g.addr),   # Input: Initial values for the constraint
-                  cast[ptr Number](mult_x_L.addr), # Input: Initial values for the multipliers
-                  cast[ptr Number](addr mult_x_U), # Input: Initial values for the multipliers
-                  cast[ptr MyUserData](addr user_data) )  
-
-]#
-
-#template objective_function()
-
-#def eval_f(x, user_data = None):
-#    assert len(x) == 4
-#    return x[0] * x[3] * (x[0] + x[1] + x[2]) + x[2]
-
-#[
-proc f(x:openArray[Number]):Number = x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]
-
-#
-proc gen_eval_f( vec:openArray[Number],
-                 f1: proc(vec:openArray[Number]):Number ):Eval_F_CB = 
-  return proc eval_f( n:Index,
-               x:ptr Number, 
-               new_x:Bool,
-               obj_value:ptr Number, 
-               user_data:UserDataPtr):Bool  {.cdecl,exportc.} =
-    assert n == vec.len
-    obj_value[] = f1( cast[ptr UncheckedArray[Number]](x) )
-    return TRUE
-]#
-
-#eval_f = gen_eval_f()
-
-#[
-template objectiveFunction(body:untyped):untyped =
-  proc eval_f( n:Index,
-               x:ptr Number, 
-               new_x:Bool,
-               obj_value:ptr Number, 
-               user_data:UserDataPtr):Bool  {.cdecl,exportc.} =
-    obj_value[] = f( cast[ptr UncheckedArray[Number]](x) )
-    return TRUE  
-
-
-]#
-#[
-macro objective*( buf:untyped, body:untyped):untyped =
-  #let vec = newIdentNode(x & "Vec") 
-
-  result = nnkStmtList.newTree()
-  result.add quote do:
-    proc eval_f( n:Index,
-                 x:ptr Number, 
-                 new_x:Bool,
-                 obj_value:ptr Number, 
-                 user_data:UserDataPtr):Bool  {.cdecl,exportc.} =
-      let buf = cast[ptr UncheckedArray[Number]](x)
-      `body`      
-      obj_value[] = f( cast[ptr UncheckedArray[Number]](x) )
-      return TRUE       
-
-objective(x):
-  #assert( x.len == n)
-  x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]  
-]#
-#[
-proc eval_f( n:Index,
-             x:ptr Number, 
-             new_x:Bool,
-             obj_value:ptr Number, 
-             user_data:UserDataPtr):Bool  {.cdecl,exportc.} =
-  ## Callback function for evaluating objective function
-  assert(n == 4)
-  let buf = cast[ptr UncheckedArray[Number]](x) 
-  
-  let tmp = buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-  obj_value[] = tmp
-  return TRUE  
-]#
-#proc gen_objective()
-
-#[
-macro hola(x:untyped, body:untyped):untyped =
-  
-  result = nnkStmtList.newTree()
-  result.add quote do:
-    proc eval_ff( n:Index,
-                  x:ptr Number, 
-                  new_x:Bool,
-                  obj_value:ptr Number, 
-                  user_data:UserDataPtr):Bool  {.cdecl,exportc.} =    
-      `body`
-      echo `x`
-
-
-hola(x):
-  let prueba = 3
-]#
-#echo 
-
-
-
-#macro problem(body:untyped):untyped =
-#  result = nnkStmtList.newTree()
-
-#[
-type
-  UserData = object
-  ObjectiveFunction = proc(x:openArray[Number];user_data:UserData):Number
-  Problem = object
-    upper_limits:seq[Number]
-    lower_limits:seq[Number]
-    objective:ObjectiveFunction
-
-var p:Problem
-proc setUpperLimits(p:var Problem, x:openArray[Number]) = 
-  var s:seq[Number]
-  for i in 0..<x.len:
-    s &= x[i]
-  p.upper_limits = s
-
-proc setLowerLimits(p:var Problem, x:openArray[Number]) = 
-  var s:seq[Number]
-  for i in 0..<x.len:
-    s &= x[i]  
-  p.lower_limits = s
-
-p.setUpperLimits( [1.0,1.0,1.0,1.0] )
-p.setLowerLimits( [5.0,5.0,5.0,5.0] ) 
-p.objective = proc (x:openArray[Number]) = x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]
-]#
-#[
-macro upper_limits(x:untyped):untyped = #:untyped = 
-  let x_U = newIdentNode("x_U")
-  result = quote do:
-    let `x_U` = `x`
-
-macro lower_limits(x:untyped):untyped = #:untyped = 
-  let x_L = newIdentNode("x_L")
-  result = quote do:
-    let `x_L` = `x`
-
-
-
-echo ">>>>>> ", x_L
-echo ">>>>>> ", x_U
-]#
-
-macro problem(mbody:untyped):untyped =
+macro problem*(mbody:untyped):untyped =
   result = nnkStmtList.newTree()
   let x_L = newIdentNode("x_L")
   let x_U = newIdentNode("x_U")
   let eval_f = genSym(nskProc, ident="eval_ff")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
+  let eval_g = genSym(nskProc, ident="eval_gg")  
   let eval_grad_f = genSym(nskProc, ident="eval_grad_ff")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
   let eval_jac_g = genSym(nskProc, ident="eval_jac_gg")
   let eval_h = genSym(nskProc, ident="eval_hh")  
   let g_L = newIdentNode("g_L")  
   let g_U = newIdentNode("g_U")
+  let nlp = newIdentNode("nlp")
+
 
   var x_Lvec:seq[NimNode]
   var x_Uvec:seq[NimNode]
@@ -258,6 +77,9 @@ macro problem(mbody:untyped):untyped =
   var nLower = 0
   var nUpper = 0
   #var m = 0
+  var tmpObjHess:NimNode
+  var tmpConsHess:seq[NimNode]
+
   for body in mbody:
     body.expectKind nnkCall
     if eqIdent(body[0], "upper_limits"):
@@ -316,13 +138,20 @@ macro problem(mbody:untyped):untyped =
             return TRUE
 
     if eqIdent(body[0], "hess"):          
-      for i in body[1]:   # Each part of the Hessian
+
+      for i in body[1]:   # Each part of the Hessian  (nnkStmtList)
+        #if i[0].strVal != "@": #Ident (@)       
+        #  raise newException()
+        assert( i[0].strVal == "@", "a sequence shall be provided" )
+        #echo i.astGenRepr  # lispSt 
         var tmp1:seq[seq[NimNode]] 
-        #echo "==> ", repr i[1]
+        #echo "==> ", repr i.type
+        tmpObjHess = i
         for r in i[1]:
           var tmp2:seq[NimNode]
           for c in r[1]:
             #echo "---> ", repr c, " ", type(c)
+            #echo c.astGenRepr
             tmp2 &= c
           
           tmp1 &= tmp2
@@ -336,19 +165,23 @@ macro problem(mbody:untyped):untyped =
         #echo repr item[0]
         if eqIdent(item[0], "lower_limit"):
           g_lower &= item[1]
+         
         if eqIdent(item[0], "upper_limit"):
           g_upper &= item[1]
         if eqIdent(item[0], "function"):
           g &= item[1]    
         if eqIdent(item[0], "grad"):
           var tmp:seq[NimNode]
+          #echo item.astGenRepr
           for i in item[1][0]:
             tmp &= i
           
           g_grad &= tmp
         if eqIdent(item[0], "hess"):          
           for i in item[1]:   # Each part of the Hessian
-            var tmp1:seq[seq[NimNode]] 
+            var tmp1:seq[seq[NimNode]]
+            #echo ">>>> ", repr i 
+            tmpConsHess &= i
             for r in i[1]:
               var tmp2:seq[NimNode]
               for c in r[1]:  
@@ -426,12 +259,25 @@ macro problem(mbody:untyped):untyped =
   #for r in 0..<g_hess[0].len:
   #  for c in 0..<g_hess[0][r].len:
   #    echo ">> ", repr g_hess[0][r][c]
+
+  #echo g_grad.astGenRepr
   let obj_hess = g_hess[0]
   for i in obj_hess:
     echo repr i," ", type(i)
-  echo type(obj_hess)
+  #echo type(obj_hess)
+  echo "============================"
+  #echo repr tmpConsHess
+  #echo obj_hess.astGenRepr
+  #let tmp = obj_hess[0][0]
+  #let borrame = quote do:
+  #   let a = @[@[1.0],@[1.0,2.0]]
+  #echo borrame.astGenRepr
   #let n = x_U.len
   #echo ">> ", n
+  for constrain in 0..<n_constrains.len:
+    echo repr tmpConsHess[constrain]
+
+
   result.add quote do:
     proc `eval_h`( n: Index; 
                    xx: ptr Number; 
@@ -471,328 +317,57 @@ macro problem(mbody:untyped):untyped =
         let `x`    = cast[ptr UncheckedArray[Number]](xx)
         let values = cast[ptr UncheckedArray[Number]](vvalues)
         var idx = 0
-        echo repr `obj_hess`
-        #for row in 0..<`n`:
-        #  for col in 0..row:
-        #for row in `obj_hess`:
-        #  for col in row:
-        #    echo repr col
-            #let tmp = obj_hess[row][col] 
-            #let tmp = col
-            #values[idx] = obj_factor * `obj_hess`[row][col]    #(2 * x[3])  # 0,0 
-            #echo row, " ", col, "   ", repr `g_hess`[0][row][col]
-            #idx += 1
-            #echo repr `obj_hess`[0][0]
-            #echo row, " ", col
 
-        #values[1] = obj_factor * (x[3])      # 1,0 
-        #values[2] = 0                        # 1,1 
-
-        #values[3] = obj_factor * (x[3])      # 2,0 
-        #values[4] = 0                        # 2,1 
-        #values[5] = 0                        # 2,2 
-
-        #values[6] = obj_factor * (2 * x[0] + x[1] + x[2])   # 3,0 
-        #values[7] = obj_factor * (x[0])                     # 3,1 
-        #values[8] = obj_factor * (x[0])                     # 3,2 
-        #values[9] = 0                                       # 3,3 
-
-#[
-
-
-
-
-
-    # add the portion for the first constraint
-    let lambda = cast[ptr UncheckedArray[Number]](llambda)
-    values[1] += lambda[0] * (x[2] * x[3])   # 1,0 
-
-    values[3] += lambda[0] * (x[1] * x[3])   # 2,0 
-    values[4] += lambda[0] * (x[0] * x[3])   # 2,1 
-
-    values[6] += lambda[0] * (x[1] * x[2])   # 3,0 
-    values[7] += lambda[0] * (x[0] * x[2])   # 3,1 
-    values[8] += lambda[0] * (x[0] * x[1])   # 3,2 
-
-    # add the portion for the second constraint
-    values[0] += lambda[1] * 2.0     # 0,0 
-    values[2] += lambda[1] * 2.0     # 1,1 
-    values[5] += lambda[1] * 2.0     # 2,2 
-    values[9] += lambda[1] * 2.0     # 3,3 
-
-  return TRUE  
-]#
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  #result.add quote do:
-    #`body`
-  #  assert( `x_L`.len == `x_U`.len, "Bounds limits should have the same length" )
-  
-  #echo repr result
-#upper_limits [1.0,1.0,1.0,1.0] 
-#dumpAstGen:
-expandMacros:
-  problem:
-    data:
-      g_offset: [0.0,0.0]
-    lower_limits: [1.0,1.0,1.0,1.0]
-    upper_limits: [5.0,5.0,5.0,5.0]
-    objective: x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]
-    grad: 
-      [ x[0] * x[3] + x[3] * (x[0] + x[1] + x[2]),
-        x[0] * x[3],
-        x[0] * x[3] + 1.0,
-        x[0] * (x[0] + x[1] + x[2])  
-      ]
-    hess:
-      @[ @[ 2.0 * x[3]],
-         @[ x[3],                     0.0 ],
-         @[ x[3],                     0.0,  0.0 ],
-         @[ 2.0 * x[0] + x[1] + x[2], x[0], x[0], 0.0]
-      ]
-    constrain:
-      lower_limit: 25.0
-      upper_limit: high(Number)
-      function: x[0] * x[1] * x[2] * x[3] + data.g_offset[0]
-      grad:
-        [ x[1] * x[2] * x[3],
-          x[0] * x[2] * x[3],
-          x[0] * x[1] * x[3],
-          x[0] * x[1] * x[2]
-        ]
-      hess:
-        @[ @[0.0],
-           @[x[2] * x[3], 0.0],
-           @[x[1] * x[3], x[0] * x[3], 0.0 ],
-           @[x[1] * x[2], x[0] * x[2], x[0] * x[1], 0.0 ]           
-        ]
-
-    constrain:
-      lower_limit: 40.0
-      upper_limit: 40.0
-      function: x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3] + data.g_offset[1]
-      grad:
-        [ 2.0 * x[0], 
-          2.0 * x[1], 
-          2.0 * x[2],
-          2.0 * x[3]
-        ]
-      hess:
-        @[ @[2.0],
-           @[0.0, 2.0],
-           @[0.0, 0.0, 2.0],
-           @[0.0, 0.0, 0.0, 2.0]
-        ]
-
-
-
-#[
-macro myMacro(body1,body2: untyped): untyped {.multiBodyMacro.} =
-  echo body1.lispRepr # (StmtList (Command (Ident "echo") (IntLit 1)))
-  echo body2.lispRepr # (StmtList (Command (Ident "echo") (IntLit 2)))
-
-myMacro:
-  body1:
-    echo 1
-  body2:
-    echo 2
-]#
-
-#[
-proc f(x:openArray[Number]):Number = x[0]*x[3]*(x[0]+x[1]+x[2]) + x[2]
-
-proc gen_objective(f:proc(x:openArray[Number]):Number):Eval_F_CB =   #openArray[Number]
-  return proc ( n:Index,
-                x:ptr Number, 
-                new_x:Bool,
-                obj_value:ptr Number, 
-                user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
-            ## Callback function for evaluating objective function
-            #assert(n == vec.len)
-            let buf = cast[ptr UncheckedArray[Number]](x) 
-
-            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-            obj_value[] = f(buf.toOpenArray(0,4))
-            return TRUE
-let eval_ff = gen_objective(f)
-]#
-
-#type
-#  Limits = object
-#[    
-dumpAstGen:
-  proc eval_f( n:Index,
-             x:ptr Number, 
-             new_x:Bool,
-             obj_value:ptr Number, 
-             user_data:UserDataPtr):Bool  {.cdecl,exportc.} =
-    ## Callback function for evaluating objective function
-    assert(n == 4)
-    let buf = cast[ptr UncheckedArray[Number]](x) 
+        for row in 0..<`n`:
+          for col in 0..row:
+            values[idx] = obj_factor * `tmpObjHess`[row][col]
     
-    let tmp = buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-    obj_value[] = tmp
-    return TRUE
+        # add the portion for the constraints
+        var nConst = 0
+        let lambda = cast[ptr UncheckedArray[Number]](llambda)
+        for constrain in 0..<`n_constrains`.len:
+          for row in 0..<`n`:
+            for col in 0..row:
+              #let tmp = `tmpObjHess`[constrain][row]
+              values[idx] += lambda[constrain] * `tmpConsHess`[constrain][row][col]
 
-nnkStmtList.newTree(
-  nnkProcDef.newTree(
-    newIdentNode("eval_f"),
-    newEmptyNode(),
-    newEmptyNode(),
-    nnkFormalParams.newTree(
-      newIdentNode("Bool"),
-      nnkIdentDefs.newTree(
-        newIdentNode("n"),
-        newIdentNode("Index"),
-        newEmptyNode()
-      ),
-      nnkIdentDefs.newTree(
-        newIdentNode("x"),
-        nnkPtrTy.newTree(
-          newIdentNode("Number")
-        ),
-        newEmptyNode()
-      ),
-      nnkIdentDefs.newTree(
-        newIdentNode("new_x"),
-        newIdentNode("Bool"),
-        newEmptyNode()
-      ),
-      nnkIdentDefs.newTree(
-        newIdentNode("obj_value"),
-        nnkPtrTy.newTree(
-          newIdentNode("Number")
-        ),
-        newEmptyNode()
-      ),
-      nnkIdentDefs.newTree(
-        newIdentNode("user_data"),
-        newIdentNode("UserDataPtr"),
-        newEmptyNode()
-      )
-    ),
-    nnkPragma.newTree(
-      newIdentNode("cdecl"),
-      newIdentNode("exportc")
-    ),
-    newEmptyNode(),
-    nnkStmtList.newTree(
-      newCommentStmtNode("Callback function for evaluating objective function"),
-      nnkCall.newTree(
-        newIdentNode("assert"),
-        nnkInfix.newTree(
-          newIdentNode("=="),
-          newIdentNode("n"),
-          newLit(4)
-        )
-      ),
-      nnkLetSection.newTree(
-        nnkIdentDefs.newTree(
-          newIdentNode("buf"),
-          newEmptyNode(),
-          nnkCast.newTree(
-            nnkPtrTy.newTree(
-              nnkBracketExpr.newTree(
-                newIdentNode("UncheckedArray"),
-                newIdentNode("Number")
-              )
-            ),
-            newIdentNode("x")
-          )
-        )
-      ),
-      nnkLetSection.newTree(
-        nnkIdentDefs.newTree(
-          newIdentNode("tmp"),
-          newEmptyNode(),
-          nnkInfix.newTree(
-            newIdentNode("+"),
-            nnkInfix.newTree(
-              newIdentNode("*"),
-              nnkInfix.newTree(
-                newIdentNode("*"),
-                nnkBracketExpr.newTree(
-                  newIdentNode("buf"),
-                  newLit(0)
-                ),
-                nnkBracketExpr.newTree(
-                  newIdentNode("buf"),
-                  newLit(3)
-                )
-              ),
-              nnkPar.newTree(
-                nnkInfix.newTree(
-                  newIdentNode("+"),
-                  nnkInfix.newTree(
-                    newIdentNode("+"),
-                    nnkBracketExpr.newTree(
-                      newIdentNode("buf"),
-                      newLit(0)
-                    ),
-                    nnkBracketExpr.newTree(
-                      newIdentNode("buf"),
-                      newLit(1)
-                    )
-                  ),
-                  nnkBracketExpr.newTree(
-                    newIdentNode("buf"),
-                    newLit(2)
-                  )
-                )
-              )
-            ),
-            nnkBracketExpr.newTree(
-              newIdentNode("buf"),
-              newLit(2)
-            )
-          )
-        )
-      ),
-      nnkAsgn.newTree(
-        nnkBracketExpr.newTree(
-          newIdentNode("obj_value")
-        ),
-        newIdentNode("tmp")
-      ),
-      nnkReturnStmt.newTree(
-        newIdentNode("TRUE")
-      )
-    )
-  )
-)
-]#
+      return TRUE
+
+  # ----- eval_g -------------------------
+  let nG = len(g)
+  
+  result.add quote do:
+    proc `eval_g`( n: Index; 
+             xx: ptr Number; 
+             new_x: Bool; 
+             m: Index; 
+             gg: ptr Number; 
+             user_data: UserDataPtr): Bool  {.cdecl, exportc.} =
+      ##Callback function for evaluating constraint functions
+      #assert(n == 4)
+      #assert(m == 2)
+      
+      #let my_data = cast[ptr MyUserData](user_data)
+      let `x`       = cast[ptr UncheckedArray[Number]](xx)
+      let gArray  = cast[ptr UncheckedArray[Number]](gg)
+
+      for i in 0..<`nG`: 
+        gArray[i] = `g`[i]   #x[0] * x[1] * x[2] * x[3] + my_data.g_offset[0]
+      #g[1] = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3] + my_data.g_offset[1]
+      return TRUE
+
+  # set the number of nonzeros in the Jacobian and Hessian 
+  let nele_jac = 8     # number of nonzeros in the Jacobian of the constraints 
+  let nele_hess = 10     # number of nonzeros in the Hessian of the Lagrangian (lower or upper triangular part only) 
+
+  result.add quote do:
+    let `g_L` = `g_lower` 
+    let `g_U` = `g_upper`     
+  
+  result.add quote do:
+    let `nlp`:IpoptProblem = createProblem( 
+              `x_L`, `x_U`, `g_L`, `g_U`,  #`g_L`, `g_U`, 
+              `nele_jac`, `nele_hess`,
+              `eval_f`, `eval_g`, `eval_grad_f`, `eval_jac_g`, `eval_h` )
 
 
-#[
-dumpAstGen:
-  let x_L = [1.0,2.0,3.0]
-
-#[
-nnkStmtList.newTree(
-  nnkLetSection.newTree(
-    nnkIdentDefs.newTree(
-      newIdentNode("x_L"),
-      newEmptyNode(),
-      nnkBracket.newTree(
-        newLit(1.0),
-        newLit(2.0),
-        newLit(3.0)
-      )
-    )
-  )
-)
-
-]#
-]#
