@@ -50,6 +50,214 @@ proc `[]=`*(ipopt_problem: IpoptProblem, key:string, val:Number) =
   doAssert( ret == TRUE, &"failed setting \"{key}\" with value: {val}" )  
 
 #------------------------
+# Macro
+#------------------------
+#echo item.astGenRepr
+
+proc parseLimits(body:NimNode, id:NimNode):(NimNode,int) =
+  # Parses the upper/lower limits for the variables. Returns the number of elements.
+  var counter:int = 0
+  let tmp = body[1][0]
+  var data = quote do:
+    let `id` = `tmp`
+  
+  for i in tmp:
+    counter += 1
+  return (data, counter)
+
+proc parseObjective(body:NimNode, fname:NimNode):NimNode =
+  let tmp = body[1][0]
+  let x = newIdentNode("x")
+  #let n = x_L.len
+  return quote do:
+      proc `fname`( n:Index,
+          x:ptr Number, 
+          new_x:Bool,
+          obj_value:ptr Number, 
+          user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
+        ## Callback function for evaluating objective function
+        #assert(n == 4)
+        let `x` = cast[ptr UncheckedArray[Number]](x) 
+
+        obj_value[] = `tmp`
+        return TRUE  
+
+proc parseGrad(body:NimNode, fname:NimNode):NimNode =
+  let tmp = body[1][0]
+  let x = newIdentNode("x")
+  #let n = x_L.len
+  return quote do:
+    proc `fname`(n: Index; 
+              xx: ptr Number; # Input
+              new_x: Bool; 
+              grad_ff: ptr Number; # Output
+              user_data: UserDataPtr): Bool {.cdecl, exportc.} =
+        ## Callback function for evaluating objective function
+        #assert(n == 4)
+        let `x` = cast[ptr UncheckedArray[Number]](xx) 
+        let grad_f = cast[ptr UncheckedArray[Number]](grad_ff)
+        for i in 0..<`tmp`.len:
+          grad_f[i] = `tmp`[i]
+        #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
+        #obj_value[] = `tmp`
+        return TRUE  
+
+proc parseObjHess(body:NimNode ):NimNode =
+  assert( body[1][0][0].strVal == "@", "a sequence shall be provided" )
+  return body[1][0]
+
+
+proc parseConstrain(body:NimNode ):tuple[lower:NimNode, upper:NimNode, function:NimNode, grad:seq[NimNode], hess:NimNode] =
+  let x = newIdentNode("x")
+  var 
+    lower, upper, function:NimNode
+    grad:seq[NimNode]
+    hess:NimNode
+
+  for item in body[1]:
+    #echo repr item[0]
+    if eqIdent(item[0], "lower_limit"):
+      lower = item[1]
+      
+    if eqIdent(item[0], "upper_limit"):
+      upper = item[1]
+    if eqIdent(item[0], "function"):
+      function = item[1]    
+    if eqIdent(item[0], "grad"):
+      
+      for i in item[1][0]:
+        grad &= i
+
+    if eqIdent(item[0], "hess"):
+      hess = item[1][0]       
+
+  return (lower, upper, function, grad, hess)        
+
+proc genJacG(fname:NimNode, g_grad:seq[seq[NimNode]] ):tuple[data:NimNode, n_constrains:seq[int]] =
+  # Jacobian
+  let x = newIdentNode("x")
+  var n_constrains:seq[int]
+  #let n = nLower
+  for i in 0..<g_grad.len:
+    n_constrains &= g_grad[i].len
+  #echo repr n_constrains
+  let data = quote do:
+    proc `fname`( n: Index; 
+                  xx: ptr Number; 
+                  new_x: Bool; 
+                  m: Index; 
+                  nele_jac: Index;
+                  iiRow: ptr Index; 
+                  jjCol: ptr Index; 
+                  vvalues: ptr Number;
+                  user_data: UserDataPtr): Bool {.cdecl, exportc.} =
+      ## Callback function for evaluating Jacobian of constraint functions
+      if vvalues == nil:
+        # return the structure of the jacobian 
+        # this particular jacobian is dense 
+        let iRow = cast[ptr UncheckedArray[Index]](iiRow)
+        let jCol = cast[ptr UncheckedArray[Index]](jjCol)
+        var idx = 0
+        for row in 0..<`n_constrains`.len:
+          for col in 0..<`n_constrains`[row]:
+            iRow[idx] = row.Index
+            jCol[idx] = col.Index
+            idx += 1
+      else:
+        # return the values of the jacobian of the constraints 
+        let `x`    = cast[ptr UncheckedArray[Number]](xx)
+        let values = cast[ptr UncheckedArray[Number]](vvalues)
+        var idx = 0
+        for row in 0..<`n_constrains`.len:   # For each constrain
+          for col in 0..<`n_constrains`[row]:
+            #let tmp = `g_grad`[row][col]
+            values[idx] = `g_grad`[row][col]
+            idx += 1
+
+      return TRUE
+  return (data, n_constrains)
+
+proc genHessian(fname:NimNode, tmpObjHess:NimNode, tmpConsHess:seq[NimNode], nn:int, n_constrains:seq[int] ):NimNode =
+  let x = newIdentNode("x")
+  return quote do:
+    proc `fname`( n: Index; 
+                   xx: ptr Number; 
+                   new_x: Bool; 
+                   obj_factor: Number; 
+                   m: Index;
+                   llambda: ptr Number; 
+                   new_lambda: Bool; 
+                   nele_hess: Index;
+                   iiRow: ptr Index; 
+                   jjCol: ptr Index; 
+                   vvalues: ptr Number;
+                   user_data: UserDataPtr): Bool {.cdecl, exportc.} =    
+
+      if vvalues == nil:
+        # return the structure. This is a symmetric matrix, fill the lower left triangle only. 
+        # the hessian for this problem is actually dense
+        let iRow = cast[ptr UncheckedArray[Index]](iiRow)
+        let jCol = cast[ptr UncheckedArray[Index]](jjCol)
+        var idx = 0
+        for row in 0..<`nn`:
+          for col in 0..row:
+            iRow[idx] = row.Index
+            jCol[idx] = col.Index
+            #assert(idx < nele_hess)
+            idx += 1
+            #echo idx
+        #assert(idx == nele_hess) 
+
+      else:
+        # return the values. This is a symmetric matrix, fill the lower left triangle only
+        
+        # fill the objective portion
+        let `x`    = cast[ptr UncheckedArray[Number]](xx)
+        let values = cast[ptr UncheckedArray[Number]](vvalues)
+        var idx = 0
+
+        for row in 0..<`nn`:
+          for col in 0..row:
+            values[idx] = obj_factor * `tmpObjHess`[row][col]
+            idx += 1
+    
+        # add the portion for the constraints
+        var nConst = 0
+        let lambda = cast[ptr UncheckedArray[Number]](llambda)
+        
+        for constrain in 0..<`n_constrains`.len:
+          idx = 0
+          for row in 0..<`nn`:
+            for col in 0..row:
+              #let tmp = `tmpObjHess`[constrain][row]
+              values[idx] += lambda[constrain] * `tmpConsHess`[constrain][row][col]
+              idx += 1
+
+      return TRUE
+
+proc genConstrains(fname:NimNode, g:seq[NimNode]):NimNode =
+  let nG = len(g)
+  let x = newIdentNode("x")
+  return quote do:
+    proc `fname`( n: Index; 
+             xx: ptr Number; 
+             new_x: Bool; 
+             m: Index; 
+             gg: ptr Number; 
+             user_data: UserDataPtr): Bool  {.cdecl, exportc.} =
+      ##Callback function for evaluating constraint functions
+      #assert(n == 4)
+      #assert(m == 2)
+      
+      #let my_data = cast[ptr MyUserData](user_data)
+      let `x`       = cast[ptr UncheckedArray[Number]](xx)
+      let gArray  = cast[ptr UncheckedArray[Number]](gg)
+
+      for i in 0..<`nG`: 
+        gArray[i] = `g`[i]   #x[0] * x[1] * x[2] * x[3] + my_data.g_offset[0]
+      #g[1] = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3] + my_data.g_offset[1]
+      return TRUE
+
 
 
 macro problem*(mbody:untyped):untyped =
@@ -82,287 +290,53 @@ macro problem*(mbody:untyped):untyped =
 
   for body in mbody:
     body.expectKind nnkCall
+    var tmp:NimNode
     if eqIdent(body[0], "upper_limits"):
-      let tmp = body[1][0]
-      #echo repr "-----", tmp
-      result.add quote do:
-        let `x_U` = `tmp`
-      
-      for i in tmp:
-        nUpper += 1
+      (tmp, nUpper) = parseLimits(body, x_U)
+      result.add tmp
 
     if eqIdent(body[0], "lower_limits"):
-      let tmp = body[1][0]
-      result.add quote do:
-        let `x_L` = `tmp` 
+      (tmp, nLower) = parseLimits(body, x_L)
+      result.add tmp      
 
-      for i in tmp:
-        nLower += 1
+    if eqIdent(body[0], "objective"):  
+      result.add parseObjective(body, eval_f)
 
-    if eqIdent(body[0], "objective"):        
-      let tmp = body[1][0]
-      let x = newIdentNode("x")
-      #let n = x_L.len
-      result.add quote do:
-          proc `eval_f`( n:Index,
-              x:ptr Number, 
-              new_x:Bool,
-              obj_value:ptr Number, 
-              user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
-            ## Callback function for evaluating objective function
-            #assert(n == 4)
-            let `x` = cast[ptr UncheckedArray[Number]](x) 
-  
-            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-            obj_value[] = `tmp`
-            return TRUE
 
-    if eqIdent(body[0], "grad"):        
-      let tmp = body[1][0]
-      let x = newIdentNode("x")
-      #let n = x_L.len
-      result.add quote do:
-        proc `eval_grad_f`(n: Index; 
-                 xx: ptr Number; # Input
-                 new_x: Bool; 
-                 grad_ff: ptr Number; # Output
-                 user_data: UserDataPtr): Bool {.cdecl, exportc.} =
-            ## Callback function for evaluating objective function
-            #assert(n == 4)
-            let `x` = cast[ptr UncheckedArray[Number]](xx) 
-            let grad_f = cast[ptr UncheckedArray[Number]](grad_ff)
-            for i in 0..<`tmp`.len:
-              grad_f[i] = `tmp`[i]
-            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-            #obj_value[] = `tmp`
-            return TRUE
+    if eqIdent(body[0], "grad"): 
+      result.add parseGrad(body, eval_grad_f)
 
-    if eqIdent(body[0], "hess"):          
-
-      for i in body[1]:   # Each part of the Hessian  (nnkStmtList)
-        #if i[0].strVal != "@": #Ident (@)       
-        #  raise newException()
-        assert( i[0].strVal == "@", "a sequence shall be provided" )
-        #echo i.astGenRepr  # lispSt 
-        var tmp1:seq[seq[NimNode]] 
-        #echo "==> ", repr i.type
-        tmpObjHess = i
-        for r in i[1]:
-          var tmp2:seq[NimNode]
-          for c in r[1]:
-            #echo "---> ", repr c, " ", type(c)
-            #echo c.astGenRepr
-            tmp2 &= c
-          
-          tmp1 &= tmp2
-        g_hess &= tmp1
-      #echo ">> ", repr g_hess
+    if eqIdent(body[0], "hess"):      
+      #g_hess &= parseHess(body)
+      tmpObjhess = parseObjHess(body)
 
     if eqIdent(body[0], "constrain"):        
       #let tmp = body[1][0]
-      let x = newIdentNode("x")
-      for item in body[1]:
-        #echo repr item[0]
-        if eqIdent(item[0], "lower_limit"):
-          g_lower &= item[1]
-         
-        if eqIdent(item[0], "upper_limit"):
-          g_upper &= item[1]
-        if eqIdent(item[0], "function"):
-          g &= item[1]    
-        if eqIdent(item[0], "grad"):
-          var tmp:seq[NimNode]
-          #echo item.astGenRepr
-          for i in item[1][0]:
-            tmp &= i
-          
-          g_grad &= tmp
-        if eqIdent(item[0], "hess"):          
-          for i in item[1]:   # Each part of the Hessian
-            var tmp1:seq[seq[NimNode]]
-            #echo ">>>> ", repr i 
-            tmpConsHess &= i
-            for r in i[1]:
-              var tmp2:seq[NimNode]
-              for c in r[1]:  
-                #echo repr c 
-                tmp2 &= c
-              
-              tmp1 &= tmp2
-            g_hess &= tmp1
-          
-        #echo "==>", repr g_hess
-          #echo repr g_hess
-      #let n = x_L.len
-      #[
-      result.add quote do:
-        proc `eval_grad_f`(n: Index; 
-                 xx: ptr Number; # Input
-                 new_x: Bool; 
-                 grad_ff: ptr Number; # Output
-                 user_data: UserDataPtr): Bool {.cdecl, exportc.} =
-            ## Callback function for evaluating objective function
-            #assert(n == 4)
-            let `x` = cast[ptr UncheckedArray[Number]](xx) 
-            let grad_f = cast[ptr UncheckedArray[Number]](grad_ff)
-            for i in 0..<`tmp`.len:
-              grad_f[i] = `tmp`[i]
-            #let tmp = `tmp` #buf[0]*buf[3]*(buf[0]+buf[1]+buf[2]) + buf[2]
-            #obj_value[] = `tmp`
-            return TRUE
-      ]#
+      let (lower, upper, function, grad, hess) = parseConstrain(body)
+      g_lower &= lower
+      g_upper &= upper
+      g &= function
+      g_grad &= grad
+      tmpConsHess &= hess
 
-  # Jacobian
-  let x = newIdentNode("x")
-  var n_constrains:seq[int]
-  let n = nLower
-  for i in 0..<g_grad.len:
-    n_constrains &= g_grad[i].len
-  #echo repr n_constrains
-  result.add quote do:
-    proc `eval_jac_g`( n: Index; 
-                       xx: ptr Number; 
-                       new_x: Bool; 
-                       m: Index; 
-                       nele_jac: Index;
-                       iiRow: ptr Index; 
-                       jjCol: ptr Index; 
-                       vvalues: ptr Number;
-                       user_data: UserDataPtr): Bool {.cdecl, exportc.} =
-      ## Callback function for evaluating Jacobian of constraint functions
-      if vvalues == nil:
-        # return the structure of the jacobian 
-        # this particular jacobian is dense 
-        let iRow = cast[ptr UncheckedArray[Index]](iiRow)
-        let jCol = cast[ptr UncheckedArray[Index]](jjCol)
-        var idx = 0
-        for row in 0..<`n_constrains`.len:
-          for col in 0..<`n_constrains`[row]:
-            iRow[idx] = row.Index
-            jCol[idx] = col.Index
-            idx += 1
-      else:
-        # return the values of the jacobian of the constraints 
-        let `x`    = cast[ptr UncheckedArray[Number]](xx)
-        let values = cast[ptr UncheckedArray[Number]](vvalues)
-        var idx = 0
-        for row in 0..<`n_constrains`.len:   # For each constrain
-          for col in 0..<`n_constrains`[row]:
-            #let tmp = `g_grad`[row][col]
-            values[idx] = `g_grad`[row][col]
-            idx += 1
-
-      return TRUE
+  let (data, n_constrains) = genJacG(eval_jac_g, g_grad)
+  result.add data
 
   # Hessian
-  #echo "----------"
-  #for r in 0..<g_hess[0].len:
-  #  for c in 0..<g_hess[0][r].len:
-  #    echo ">> ", repr g_hess[0][r][c]
-
-  #echo g_grad.astGenRepr
-  let obj_hess = g_hess[0]
-  for i in obj_hess:
-    echo repr i," ", type(i)
-  #echo type(obj_hess)
-  echo "============================"
-  #echo repr tmpConsHess
-  #echo obj_hess.astGenRepr
-  #let tmp = obj_hess[0][0]
-  #let borrame = quote do:
-  #   let a = @[@[1.0],@[1.0,2.0]]
-  #echo borrame.astGenRepr
-  #let n = x_U.len
-  #echo ">> ", n
-  for constrain in 0..<n_constrains.len:
-    echo repr tmpConsHess[constrain]
-
-
-  result.add quote do:
-    proc `eval_h`( n: Index; 
-                   xx: ptr Number; 
-                   new_x: Bool; 
-                   obj_factor: Number; 
-                   m: Index;
-                   llambda: ptr Number; 
-                   new_lambda: Bool; 
-                   nele_hess: Index;
-                   iiRow: ptr Index; 
-                   jjCol: ptr Index; 
-                   vvalues: ptr Number;
-                   user_data: UserDataPtr): Bool {.cdecl, exportc.} =    
-      #var idx:Index = 0 # nonzero element counter
-      #var row:Index = 0 # row counter for loop 
-      #var col:Index = 0 # col counter for loop
-
-      if vvalues == nil:
-        # return the structure. This is a symmetric matrix, fill the lower left triangle only. 
-        # the hessian for this problem is actually dense
-        let iRow = cast[ptr UncheckedArray[Index]](iiRow)
-        let jCol = cast[ptr UncheckedArray[Index]](jjCol)
-        var idx = 0
-        for row in 0..<`n`:
-          for col in 0..row:
-            iRow[idx] = row.Index
-            jCol[idx] = col.Index
-            #assert(idx < nele_hess)
-            idx += 1
-            #echo idx
-        #assert(idx == nele_hess) 
-
-      else:
-        # return the values. This is a symmetric matrix, fill the lower left triangle only
-        
-        # fill the objective portion
-        let `x`    = cast[ptr UncheckedArray[Number]](xx)
-        let values = cast[ptr UncheckedArray[Number]](vvalues)
-        var idx = 0
-
-        for row in 0..<`n`:
-          for col in 0..row:
-            values[idx] = obj_factor * `tmpObjHess`[row][col]
-            idx += 1
-    
-        # add the portion for the constraints
-        var nConst = 0
-        let lambda = cast[ptr UncheckedArray[Number]](llambda)
-        
-        for constrain in 0..<`n_constrains`.len:
-          idx = 0
-          for row in 0..<`n`:
-            for col in 0..row:
-              #let tmp = `tmpObjHess`[constrain][row]
-              values[idx] += lambda[constrain] * `tmpConsHess`[constrain][row][col]
-              idx += 1
-
-      return TRUE
+  let hessian = genHessian(eval_h, tmpObjHess, tmpConsHess, nLower, n_constrains)
+  result.add hessian
 
   # ----- eval_g -------------------------
-  let nG = len(g)
-  
-  result.add quote do:
-    proc `eval_g`( n: Index; 
-             xx: ptr Number; 
-             new_x: Bool; 
-             m: Index; 
-             gg: ptr Number; 
-             user_data: UserDataPtr): Bool  {.cdecl, exportc.} =
-      ##Callback function for evaluating constraint functions
-      #assert(n == 4)
-      #assert(m == 2)
-      
-      #let my_data = cast[ptr MyUserData](user_data)
-      let `x`       = cast[ptr UncheckedArray[Number]](xx)
-      let gArray  = cast[ptr UncheckedArray[Number]](gg)
-
-      for i in 0..<`nG`: 
-        gArray[i] = `g`[i]   #x[0] * x[1] * x[2] * x[3] + my_data.g_offset[0]
-      #g[1] = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3] + my_data.g_offset[1]
-      return TRUE
+  result.add genConstrains(eval_g, g)
 
   # set the number of nonzeros in the Jacobian and Hessian 
-  let nele_jac = 8     # number of nonzeros in the Jacobian of the constraints 
-  let nele_hess = 10     # number of nonzeros in the Hessian of the Lagrangian (lower or upper triangular part only) 
+  var nele_jac = 0       # number of nonzeros in the Jacobian of the constraints 
+  for i in n_constrains:
+    nele_jac += i
+
+
+  let nele_hess = (nLower * (nLower + 1)/2).int     # number of nonzeros in the Hessian of the Lagrangian (lower or upper triangular part only) 
+
 
   result.add quote do:
     let `g_L` = `g_lower` 
