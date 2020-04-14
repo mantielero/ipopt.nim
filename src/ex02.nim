@@ -55,11 +55,15 @@ expandMacros:
            @[0.0, 0.0, 2.0],
            @[0.0, 0.0, 0.0, 2.0]
         ]
+    options:
+      tol: 1e-7
+      mu_strategy: "adaptive"
+      output_file: "ipopt.out"
 
 
-nlp["tol"] = 1e-7
-nlp["mu_strategy"] = "adaptive"
-nlp["output_file"] = "ipopt.out"
+#nlp["tol"] = 1e-7
+#nlp["mu_strategy"] = "adaptive"
+#nlp["output_file"] = "ipopt.out"
 
 var
     x = [1.0, 5.0, 5.0, 1.0]        # starting point and solution vector (allocate space for the initial point and set the values)

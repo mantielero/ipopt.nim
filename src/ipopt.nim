@@ -259,6 +259,35 @@ proc genConstrains(fname:NimNode, g:seq[NimNode]):NimNode =
       return TRUE
 
 
+proc parseOptions(body:NimNode ):NimNode =
+  #let x = newIdentNode("x")
+  #var 
+  #  lower, upper, function:NimNode
+  #  grad:seq[NimNode]
+  #  hess:NimNode
+  result = nnkStmtList.newTree()
+  let nlp = newIdentNode("nlp")
+  for item in body[1]:
+    echo repr item[0], "====", repr item[1][0].astGenRepr 
+    let key = item[0].strVal
+    let value = item[1][0]
+    #echo key
+    result.add quote do:
+      `nlp`[`key`] = `value`
+  echo repr result
+    #   `[]=`( `nlp`, `key`, `item`[1] )
+
+
+    # []=(nlp, "tol", 1e-07)
+    #echo repr item[0]
+    #if eqIdent(item[0], "tol"):
+    #  lower = item[1]
+      
+    #if eqIdent(item[0], "mu_strategy"):
+    #  upper = item[1]
+    #if eqIdent(item[0], "output_file"):
+    #  function = item[1] 
+
 
 macro problem*(mbody:untyped):untyped =
   result = nnkStmtList.newTree()
@@ -287,6 +316,7 @@ macro problem*(mbody:untyped):untyped =
   #var m = 0
   var tmpObjHess:NimNode
   var tmpConsHess:seq[NimNode]
+  var options:NimNode
 
   for body in mbody:
     body.expectKind nnkCall
@@ -319,6 +349,9 @@ macro problem*(mbody:untyped):untyped =
       g_grad &= grad
       tmpConsHess &= hess
 
+    if eqIdent(body[0], "options"):      
+      options = parseOptions(body)
+
   let (data, n_constrains) = genJacG(eval_jac_g, g_grad)
   result.add data
 
@@ -348,4 +381,7 @@ macro problem*(mbody:untyped):untyped =
               `nele_jac`, `nele_hess`,
               `eval_f`, `eval_g`, `eval_grad_f`, `eval_jac_g`, `eval_h` )
 
+  result.add options
+  #result.add quote do:
+  #  nlp["tol"] = 1e-7
 
