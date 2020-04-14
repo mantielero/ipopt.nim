@@ -78,3 +78,5 @@ let status = IpoptSolve( nlp, # Problem that is to be optimized
                 cast[ptr Number](addr mult_x_U), # Input: Initial values for the multipliers
                 nil)
                 #cast[ptr MyUserData](addr user_data) )
+
+echo "Objective: ", obj

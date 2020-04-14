@@ -321,15 +321,19 @@ macro problem*(mbody:untyped):untyped =
         for row in 0..<`n`:
           for col in 0..row:
             values[idx] = obj_factor * `tmpObjHess`[row][col]
+            idx += 1
     
         # add the portion for the constraints
         var nConst = 0
         let lambda = cast[ptr UncheckedArray[Number]](llambda)
+        
         for constrain in 0..<`n_constrains`.len:
+          idx = 0
           for row in 0..<`n`:
             for col in 0..row:
               #let tmp = `tmpObjHess`[constrain][row]
               values[idx] += lambda[constrain] * `tmpConsHess`[constrain][row][col]
+              idx += 1
 
       return TRUE
 
