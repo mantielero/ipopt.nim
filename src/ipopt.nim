@@ -2,7 +2,21 @@ include "IpStdCInterface"
 import strformat
 import macros
 import options
-import sugar
+#TODO: en solve que reciba como parámetro el número de constrains
+
+#import sugar
+#[
+type
+  Problem = object
+    x_L, x_U, g_L, g_U:  openArray[Number]
+    nele_jac, nele_hess: int
+    eval_f:      Eval_F_CB
+    eval_g:      Eval_G_CB
+    eval_grad_f: Eval_Grad_F_CB
+    eval_jac_g:  Eval_Jac_G_CB 
+    eval_h:      Eval_H_CB
+    nlp: IpoptProblem
+]#
 
 proc createProblem*( x_L, x_U, g_L, g_U:  openArray[Number],
                      nele_jac, nele_hess: int,
@@ -49,35 +63,98 @@ proc `[]=`*(ipopt_problem: IpoptProblem, key:string, val:Number) =
   let ret = AddIpoptNumOption(ipopt_problem, key.cstring, val )
   doAssert( ret == TRUE, &"failed setting \"{key}\" with value: {val}" )  
 
+
+proc solve*(problem: IpoptProblem, ini:seq[Number]):tuple[obj:Number, sol:seq[Number], mult_g:seq[Number], mult_x_L:seq[Number],  mult_x_U:seq[Number]] =
+  ##[
+  - `problem`: constains the problem to be solved
+  - `ini`: starting point and solution vector (allocate space for the initial point and set the values)
+  ]##
+  var
+    x = ini
+    mult_g = newSeq[Number](2)#array[2, Number]         # constraint multipliers at the solution 
+    mult_x_L = newSeq[Number](ini.len) #:array[4, Number]       # lower bound multipliers at the solution
+    mult_x_U = newSeq[Number](ini.len)       # upper bound multipliers at the solution 
+    obj:Number   
+
+  let status = IpoptSolve( problem, # Problem that is to be optimized
+                 cast[ptr Number](x[0].addr),  # Input:  Starting point
+                 cast[ptr Number](nil), # Values of constraint at final point
+                 cast[ptr Number](obj.unsafeAddr), # Final value of objective function
+                 cast[ptr Number](mult_g[0].addr),   # Input: Initial values for the constraint
+                 cast[ptr Number](mult_x_L[0].addr), # Input: Initial values for the multipliers
+                 cast[ptr Number](mult_x_U[0].addr), # Input: Initial values for the multipliers
+                 nil)
+                #cast[ptr MyUserData](addr user_data) )
+  doAssert( status == Solve_Succeeded, "ERROR OCCURRED DURING IPOPT OPTIMIZATION")
+  return (obj, x, mult_g, mult_x_L, mult_x_U)
+
+proc solveWarm*(problem: IpoptProblem, ini, mult_gg, mult_x_LL, mult_x_UU:seq[Number]):tuple[obj:Number, sol:seq[Number], mult_g:seq[Number], mult_x_L:seq[Number],  mult_x_U:seq[Number]] =
+  var
+    x = ini
+    mult_g = mult_gg     #array[2, Number]         # constraint multipliers at the solution 
+    mult_x_L = mult_x_LL #:array[4, Number]       # lower bound multipliers at the solution
+    mult_x_U = mult_x_UU # upper bound multipliers at the solution 
+    obj:Number 
+  problem["warm_start_init_point"] = "yes"
+  let status = IpoptSolve( problem, # Problem that is to be optimized
+                 cast[ptr Number](x[0].addr),  # Input:  Starting point
+                 cast[ptr Number](nil), # Values of constraint at final point
+                 cast[ptr Number](obj.unsafeAddr), # Final value of objective function
+                 cast[ptr Number](mult_g[0].addr),   # Input: Initial values for the constraint
+                 cast[ptr Number](mult_x_L[0].addr), # Input: Initial values for the multipliers
+                 cast[ptr Number](mult_x_U[0].addr), # Input: Initial values for the multipliers
+                 nil) 
+
+  doAssert( status == Solve_Succeeded, "ERROR OCCURRED DURING IPOPT OPTIMIZATION")
+  return (obj, x, mult_g, mult_x_L, mult_x_U)
+
+
+
 #------------------------
 # Macro
 #------------------------
 #echo item.astGenRepr
 
-proc parseLimits(body:NimNode, id:NimNode):(NimNode,int) =
+proc parseLimits(body:NimNode):(NimNode,int) =
   # Parses the upper/lower limits for the variables. Returns the number of elements.
   var counter:int = 0
+  assert( body[1][0][0].strVal == "@", "a sequence shall be provided" )
   let tmp = body[1][0]
-  var data = quote do:
-    let `id` = `tmp`
-  
-  for i in tmp:
-    counter += 1
-  return (data, counter)
+  return (tmp, tmp[1].len)
+
+
+
+#[
+proc procToLambda(body:NimNode):NimNode = 
+  var data = newTree(nnkLambda)
+  for i in body:
+    data.add i
+  data[0] = newEmptyNode() #.astGenRepr
+  #var data2 = newTree(nnkLambda)
+  return data
 
 proc parseObjective(body:NimNode, fname:NimNode):NimNode =
   let tmp = body[1][0]
   let x = newIdentNode("x")
-  #let n = x_L.len
-  return quote do:
-      proc `fname`( n:Index,
-          x:ptr Number, 
-          new_x:Bool,
-          obj_value:ptr Number, 
-          user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
+  var data = quote do:  ##`fname`
+      proc `fname`( n:Index, xx:ptr Number, new_x:Bool, obj_value:ptr Number, user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
         ## Callback function for evaluating objective function
         #assert(n == 4)
-        let `x` = cast[ptr UncheckedArray[Number]](x) 
+        let `x` = cast[ptr UncheckedArray[Number]](xx) 
+
+        obj_value[] = `tmp`
+        return TRUE
+  return procToLambda(data)
+  #echo result.astGenRepr
+]#
+proc parseObjective(body:NimNode, fname:NimNode):NimNode =
+  let tmp = body[1][0]
+  let x = newIdentNode("x")
+  return quote do:  ##`fname`
+      proc `fname`( n:Index, xx:ptr Number, new_x:Bool, obj_value:ptr Number, user_data:UserDataPtr ):Bool  {.cdecl,exportc.} =
+        ## Callback function for evaluating objective function
+        #assert(n == 4)
+        let `x` = cast[ptr UncheckedArray[Number]](xx) 
 
         obj_value[] = `tmp`
         return TRUE  
@@ -107,11 +184,11 @@ proc parseObjHess(body:NimNode ):NimNode =
   return body[1][0]
 
 
-proc parseConstrain(body:NimNode ):tuple[lower:NimNode, upper:NimNode, function:NimNode, grad:seq[NimNode], hess:NimNode] =
+proc parseConstrain(body:NimNode ):tuple[lower, upper, function, grad, hess:NimNode] =
   let x = newIdentNode("x")
   var 
     lower, upper, function:NimNode
-    grad:seq[NimNode]
+    grad:NimNode
     hess:NimNode
 
   for item in body[1]:
@@ -124,23 +201,24 @@ proc parseConstrain(body:NimNode ):tuple[lower:NimNode, upper:NimNode, function:
     if eqIdent(item[0], "function"):
       function = item[1]    
     if eqIdent(item[0], "grad"):
-      
-      for i in item[1][0]:
-        grad &= i
+      assert( item[1][0][0].strVal == "@", "a sequence shall be provided" )
+      grad = item[1][0]
+      #for i in item[1][0]:
+      #  grad &= i
 
     if eqIdent(item[0], "hess"):
+      assert( item[1][0][0].strVal == "@", "a sequence shall be provided" )
       hess = item[1][0]       
 
   return (lower, upper, function, grad, hess)        
 
-proc genJacG(fname:NimNode, g_grad:seq[seq[NimNode]] ):tuple[data:NimNode, n_constrains:seq[int]] =
+proc genJacG(fname:NimNode, g_grad:seq[NimNode] ):tuple[data:NimNode, n_constrains:seq[int]] =
   # Jacobian
   let x = newIdentNode("x")
   var n_constrains:seq[int]
-  #let n = nLower
   for i in 0..<g_grad.len:
-    n_constrains &= g_grad[i].len
-  #echo repr n_constrains
+    n_constrains &= g_grad[i][1].len
+  echo repr n_constrains
   let data = quote do:
     proc `fname`( n: Index; 
                   xx: ptr Number; 
@@ -259,48 +337,39 @@ proc genConstrains(fname:NimNode, g:seq[NimNode]):NimNode =
       return TRUE
 
 
-proc parseOptions(body:NimNode ):NimNode =
-  #let x = newIdentNode("x")
-  #var 
-  #  lower, upper, function:NimNode
-  #  grad:seq[NimNode]
-  #  hess:NimNode
+proc parseOptions(body, nlp:NimNode ):NimNode =
   result = nnkStmtList.newTree()
-  let nlp = newIdentNode("nlp")
+  #let nlp = newIdentNode("nlp")
   for item in body[1]:
     echo repr item[0], "====", repr item[1][0].astGenRepr 
     let key = item[0].strVal
     let value = item[1][0]
-    #echo key
     result.add quote do:
       `nlp`[`key`] = `value`
-  echo repr result
-    #   `[]=`( `nlp`, `key`, `item`[1] )
 
 
-    # []=(nlp, "tol", 1e-07)
-    #echo repr item[0]
-    #if eqIdent(item[0], "tol"):
-    #  lower = item[1]
-      
-    #if eqIdent(item[0], "mu_strategy"):
-    #  upper = item[1]
-    #if eqIdent(item[0], "output_file"):
-    #  function = item[1] 
+proc genSequence(data:seq[NimNode]):NimNode =
+  var body:NimNode = newTree(nnkPrefix, newIdentNode("@"))
+  body.add newTree(nnkBracket) 
 
+  for i in data:
+    body[1].add i[0]
+  return body
 
-macro problem*(mbody:untyped):untyped =
+macro problem*(name:string, mbody:untyped):untyped =
   result = nnkStmtList.newTree()
-  let x_L = newIdentNode("x_L")
-  let x_U = newIdentNode("x_U")
+  var xLower,xUpper:NimNode
+  #let x_L = newIdentNode("x_L")
+  #let x_U = newIdentNode("x_U")
   let eval_f = genSym(nskProc, ident="eval_ff")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
+  var objective:NimNode
   let eval_g = genSym(nskProc, ident="eval_gg")  
   let eval_grad_f = genSym(nskProc, ident="eval_grad_ff")   #newIdentNode()  #nskFunc  # genSym(nskLabel)#
   let eval_jac_g = genSym(nskProc, ident="eval_jac_gg")
   let eval_h = genSym(nskProc, ident="eval_hh")  
   let g_L = newIdentNode("g_L")  
   let g_U = newIdentNode("g_U")
-  let nlp = newIdentNode("nlp")
+  let nlp = newIdentNode(name.strVal)
 
 
   var x_Lvec:seq[NimNode]
@@ -308,7 +377,7 @@ macro problem*(mbody:untyped):untyped =
   var g_lower:seq[NimNode]
   var g_upper:seq[NimNode]
   var g:seq[NimNode]
-  var g_grad:seq[seq[NimNode]]
+  var g_grad:seq[NimNode]
   var g_hess:seq[ seq[seq[NimNode]] ]
   #var g_constrains:
   var nLower = 0
@@ -317,21 +386,21 @@ macro problem*(mbody:untyped):untyped =
   var tmpObjHess:NimNode
   var tmpConsHess:seq[NimNode]
   var options:NimNode
+  var customData:NimNode
 
   for body in mbody:
     body.expectKind nnkCall
     var tmp:NimNode
     if eqIdent(body[0], "upper_limits"):
-      (tmp, nUpper) = parseLimits(body, x_U)
-      result.add tmp
+      (xUpper, nUpper) = parseLimits(body)
 
     if eqIdent(body[0], "lower_limits"):
-      (tmp, nLower) = parseLimits(body, x_L)
-      result.add tmp      
+      (xLower, nLower) = parseLimits(body)          
 
     if eqIdent(body[0], "objective"):  
       result.add parseObjective(body, eval_f)
-
+      #let obj2 = procToLambda(objective)
+      #echo obj2.astGenRepr
 
     if eqIdent(body[0], "grad"): 
       result.add parseGrad(body, eval_grad_f)
@@ -350,7 +419,8 @@ macro problem*(mbody:untyped):untyped =
       tmpConsHess &= hess
 
     if eqIdent(body[0], "options"):      
-      options = parseOptions(body)
+      options = parseOptions(body, nlp)
+
 
   let (data, n_constrains) = genJacG(eval_jac_g, g_grad)
   result.add data
@@ -370,18 +440,23 @@ macro problem*(mbody:untyped):untyped =
 
   let nele_hess = (nLower * (nLower + 1)/2).int     # number of nonzeros in the Hessian of the Lagrangian (lower or upper triangular part only) 
 
+  var ggLower = genSequence( g_lower )
+  var ggUpper = genSequence( g_upper )
 
-  result.add quote do:
-    let `g_L` = `g_lower` 
-    let `g_U` = `g_upper`     
   
+
+  #result.add quote do:
+  #  var `eval_f` = `objective`
+    
   result.add quote do:
     let `nlp`:IpoptProblem = createProblem( 
-              `x_L`, `x_U`, `g_L`, `g_U`,  #`g_L`, `g_U`, 
+              `xLower`, `xUpper`, `ggLower`, `ggUpper`,
               `nele_jac`, `nele_hess`,
               `eval_f`, `eval_g`, `eval_grad_f`, `eval_jac_g`, `eval_h` )
 
   result.add options
+
+  #echo repr g_lower.astGenRepr
   #result.add quote do:
   #  nlp["tol"] = 1e-7
 
